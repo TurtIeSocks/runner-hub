@@ -14,7 +14,8 @@ import (
 	"github.com/TurtIeSocks/runner-hub/internal/gh"
 )
 
-// workRoot must match base in the box scripts.
+// workRoot must match the box scripts. Each runner's root is workRoot/<name>,
+// and its jobs work in _work below that.
 const workRoot = "/srv/runner-hub/work/"
 
 type Dispatcher struct {
@@ -267,7 +268,7 @@ func (d *Dispatcher) launchAll(ctx context.Context, launches []Launch, now time.
 
 func (d *Dispatcher) launch(ctx context.Context, l Launch) error {
 	b := d.box(l.Box)
-	jit, err := d.gh.MintJIT(ctx, l.Job.Repo, l.Name, d.cfg.RunnerGroupID, l.Labels, workRoot+l.Name)
+	jit, err := d.gh.MintJIT(ctx, l.Job.Repo, l.Name, d.cfg.RunnerGroupID, l.Labels, workRoot+l.Name+"/_work")
 	if err != nil {
 		return err
 	}
