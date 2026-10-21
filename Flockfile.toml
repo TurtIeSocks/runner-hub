@@ -1,0 +1,13 @@
+# shep app definition, read by `shep start` and by shep-deploy.
+
+[[app]]
+name = "runner-hub"
+script = "bin/runner-hub"
+args = ["-config", "/etc/runner-hub/config.toml", "run"]
+max_memory = "128M"
+# A launch can be mid-way through a docker pull. Anything it leaves behind
+# is cleaned up by the next process's first reconcile.
+kill_timeout = "10s"
+
+[dog.deploy.build]
+command = "go build -o bin/runner-hub ./cmd/runner-hub"

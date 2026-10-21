@@ -1,0 +1,31 @@
+app_id = 123456
+private_key_path = "/etc/runner-hub/app.pem"
+runner_image = "ghcr.io/actions/actions-runner:2.338.0@sha256:4ffadc0002b2581327e06101fc8c06cd189232baf79fe561fac9caeb76f5e807"
+# runner_group_id = 1      # "Default"
+# poll_interval = "20s"
+# idle_timeout = "10m"
+
+# Repos the App is installed on that runner-hub serves. Private only.
+repos = ["your-user/your-repo"]
+
+# A box with any of these units active is taken by something else and gets
+# no new runners. Patterns, as systemctl list-units takes them.
+# claim_units = ["heavy-job-*"]           # system units
+# claim_user_units = ["keep-away.timer"]  # the ssh user's own units
+
+[ssh]
+key_path = "/etc/runner-hub/id_ed25519"
+known_hosts_path = "/var/lib/runner-hub/known_hosts"
+# Keep it short: ssh's control socket path has to fit in about 100 bytes.
+control_dir = "/var/lib/runner-hub/ctl"
+
+[[box]]
+name = "box1"
+host = "203.0.113.10"
+# user = "ubuntu"
+# arch = "ARM64"   # X64, ARM64 or ARM
+# slots = 1        # concurrent jobs
+
+[[box]]
+name = "box2"
+host = "203.0.113.11"
