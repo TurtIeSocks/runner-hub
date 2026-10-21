@@ -25,6 +25,7 @@ host = "203.0.113.10"
 # user = "ubuntu"
 # arch = "ARM64"   # X64, ARM64 or ARM
 # slots = 1        # concurrent jobs
+# priority = 0     # a free box of higher priority is picked first
 
 [[box]]
 name = "box2"

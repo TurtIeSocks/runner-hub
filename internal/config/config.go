@@ -42,6 +42,9 @@ type Box struct {
 	User  string `toml:"user"`
 	Arch  string `toml:"arch"`
 	Slots int    `toml:"slots"`
+	// Priority orders boxes for a job: a free box of higher priority is
+	// always picked before one of lower, whatever their last launches.
+	Priority int `toml:"priority"`
 }
 
 var (

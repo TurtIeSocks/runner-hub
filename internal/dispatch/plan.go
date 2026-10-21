@@ -10,9 +10,10 @@ import (
 
 // BoxState is one box as the last poll saw it.
 type BoxState struct {
-	Name  string
-	Arch  string
-	Slots int
+	Name     string
+	Arch     string
+	Slots    int
+	Priority int
 	// Up is false when the box's status couldn't be read; its containers are
 	// then unknown, so nothing on it is launched, reaped or deregistered.
 	Up         bool
@@ -168,8 +169,9 @@ func idle(in Input, boxName string, c box.Container) (Reap, bool) {
 	return reap, true
 }
 
-// pickBox takes the free box of the right arch that launched least recently,
-// which spreads jobs, and so wear and warm caches, across the pool.
+// pickBox takes the free box of the right arch with the highest priority,
+// and among those the one that launched least recently, which spreads jobs,
+// and so wear and warm caches, across the pool.
 func pickBox(boxes []BoxState, arch string, used map[string]int) *BoxState {
 	var best *BoxState
 	for i := range boxes {
@@ -177,8 +179,9 @@ func pickBox(boxes []BoxState, arch string, used map[string]int) *BoxState {
 		if !b.Up || b.Claimed || (arch != "" && b.Arch != arch) || used[b.Name] >= b.Slots {
 			continue
 		}
-		if best == nil || b.LastLaunch.Before(best.LastLaunch) ||
-			(b.LastLaunch.Equal(best.LastLaunch) && b.Name < best.Name) {
+		if best == nil || b.Priority > best.Priority ||
+			(b.Priority == best.Priority && (b.LastLaunch.Before(best.LastLaunch) ||
+				(b.LastLaunch.Equal(best.LastLaunch) && b.Name < best.Name))) {
 			best = b
 		}
 	}
