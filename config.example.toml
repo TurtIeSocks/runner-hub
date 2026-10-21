@@ -5,9 +5,6 @@ runner_image = "ghcr.io/actions/actions-runner:2.338.0@sha256:4ffadc0002b2581327
 # poll_interval = "20s"
 # idle_timeout = "10m"
 
-# Repos the App is installed on that runner-hub serves. Private only.
-repos = ["your-user/your-repo"]
-
 # A box with any of these units active is taken by something else and gets
 # no new runners. Patterns, as systemctl list-units takes them.
 # claim_units = ["heavy-job-*"]           # system units

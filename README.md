@@ -2,14 +2,14 @@
 
 Spreads GitHub Actions jobs from private repos on a personal account across a pool of Linux boxes, without registering a runner per repo per box.
 
-Personal accounts can't have account-level runners, only repo-level ones. runner-hub is a GitHub App plus a small polling service. For each queued self-hosted job in an opted-in repo it picks a free box, mints a single-use JIT runner for that repo with the job's labels, and starts it in a container on the box over ssh. The runner takes one job and exits. Workflows don't change: a job asking for `[self-hosted, my-repo]` gets a runner carrying exactly those labels.
+Personal accounts can't have account-level runners, only repo-level ones. runner-hub is a GitHub App plus a small polling service. Installing the App on a repo opts it in. For each queued self-hosted job in a repo the App is installed on, it picks a free box, mints a single-use JIT runner for that repo with the job's labels, and starts it in a container on the box over ssh. The runner takes one job and exits. Workflows don't change: a job asking for `[self-hosted, my-repo]` gets a runner carrying exactly those labels.
 
 ## How it works
 
 Every `poll_interval` (20s by default) it:
 
 - reads each box over ssh: its runner containers, and whether something else has claimed it
-- reads each repo's queued jobs and runner list from the API
+- lists the repos the App is installed on, then reads each one's queued jobs and runner list
 - launches a runner for each queued job that has none, on the free box of the right arch that launched least recently
 - removes runners idle past `idle_timeout` (10m by default): a cancelled job, or one a static runner took first, leaves one behind
 - deregisters runners whose container is gone
@@ -26,7 +26,7 @@ On the box, each runner is a container of `ghcr.io/actions/actions-runner` with:
 
 The JIT config goes over ssh's stdin and into the container through `docker exec`. It's never on a command line or on the box's disk. The runner reads it from an environment variable and masks it in its logs. It stays in that process's environment, but it's single-use and already spent by then.
 
-Only private repos get runners. A public repo's fork PRs would run their code on the boxes, so runner-hub refuses them.
+Only private repos get runners. A public repo's fork PRs would run their code on the boxes, so runner-hub skips them even with the App installed.
 
 ## Setup
 
@@ -38,7 +38,7 @@ Create it at https://github.com/settings/apps/new:
 - Repository permissions: Actions read-only, Administration read and write (runner registration lives under Administration)
 - Where can this app be installed: only on this account
 
-Then generate a private key, note the App ID, and install the App on the repos to opt in, picking "Only select repositories".
+Then generate a private key, note the App ID, and install the App with "Only select repositories". Avoid "All repositories": every private repo with self-hosted jobs would be served, including ones whose jobs can't run on the pool's arch.
 
 ### The service
 
@@ -46,12 +46,12 @@ Then generate a private key, note the App ID, and install the App on the repos t
 go build -o bin/runner-hub ./cmd/runner-hub
 ```
 
-Config lives in `/etc/runner-hub/config.toml`, see `config.example.toml`. The App's private key and the ssh key go next to it, readable only by the service's user. Keep the config out of the repo: it names your private repos.
+Config lives in `/etc/runner-hub/config.toml`, see `config.example.toml`. The App's private key and the ssh key go next to it, readable only by the service's user.
 
 `Flockfile.toml` runs it under [shep](https://github.com/shep-pm/shep).
 
 ```sh
-runner-hub status         # boxes, claims, containers, and each repo's runners
+runner-hub status         # boxes, claims, containers, and each installed repo's runners
 runner-hub once           # one reconcile, then exit
 runner-hub -debug run     # the service
 ```
@@ -67,11 +67,9 @@ The box needs Docker, a user in the `docker` group with passwordless sudo, and o
 
 ## Opting a repo in
 
-1. Install the App on the repo (App settings, Install App, configure).
-2. Add `owner/repo` to `repos` in the config.
-3. Restart the service.
+Add the repo to the App's installation (App settings, Install App, configure). The next poll picks it up and logs `serving repo`. Removing it stops new runners, and its leftover ones are reaped once idle.
 
-Nothing changes on the boxes. A static runner already serving the repo will race runner-hub for its jobs. Whichever runner loses sits idle until the reaper removes it.
+Nothing changes on the boxes or in the config. A static runner already serving the repo will race runner-hub for its jobs. Whichever runner loses sits idle until the reaper removes it.
 
 ## Updating the runner image
 

@@ -15,6 +15,11 @@ import (
 	"github.com/google/go-github/v92/github"
 )
 
+type Repo struct {
+	FullName string
+	Private  bool
+}
+
 type Job struct {
 	Repo   string
 	ID     int64
@@ -57,23 +62,58 @@ func New(appID int64, privateKeyPath string) (*Client, error) {
 	return &Client{apps: apps, atr: atr, byOwner: map[string]*github.Client{}}, nil
 }
 
-func (c *Client) client(ctx context.Context, owner string) (*github.Client, error) {
+// Repos lists every repo the App is installed on. Installing the App on a
+// repo is what opts it in.
+func (c *Client) Repos(ctx context.Context) ([]Repo, error) {
+	var out []Repo
+	for inst, err := range c.apps.Apps.ListInstallationsIter(ctx, &github.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return nil, fmt.Errorf("list app installations: %w", err)
+		}
+		cl, err := c.installationClient(inst.GetAccount().GetLogin(), inst.GetID())
+		if err != nil {
+			return nil, err
+		}
+		for r, err := range cl.Apps.ListReposIter(ctx, &github.ListOptions{PerPage: 100}) {
+			if err != nil {
+				return nil, fmt.Errorf("list repos of installation %d: %w", inst.GetID(), err)
+			}
+			out = append(out, Repo{FullName: r.GetFullName(), Private: r.GetPrivate()})
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) installationClient(owner string, id int64) (*github.Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if cl, ok := c.byOwner[owner]; ok {
 		return cl, nil
 	}
-	inst, _, err := c.apps.Apps.GetUserInstallation(ctx, owner)
-	if err != nil {
-		return nil, fmt.Errorf("find app installation for %s: %w", owner, err)
-	}
-	tr := ghinstallation.NewFromAppsTransport(c.atr, inst.GetID())
+	tr := ghinstallation.NewFromAppsTransport(c.atr, id)
 	cl, err := github.NewClient(github.WithTransport(tr), github.WithTimeout(requestTimeout))
 	if err != nil {
 		return nil, err
 	}
 	c.byOwner[owner] = cl
 	return cl, nil
+}
+
+// client returns the installation client for owner. A container can
+// outlive its repo's installation, so an owner Repos hasn't seen is looked
+// up directly.
+func (c *Client) client(ctx context.Context, owner string) (*github.Client, error) {
+	c.mu.Lock()
+	cl, ok := c.byOwner[owner]
+	c.mu.Unlock()
+	if ok {
+		return cl, nil
+	}
+	inst, _, err := c.apps.Apps.GetUserInstallation(ctx, owner)
+	if err != nil {
+		return nil, fmt.Errorf("find app installation for %s: %w", owner, err)
+	}
+	return c.installationClient(owner, inst.GetID())
 }
 
 func split(repo string) (string, string) {
@@ -138,21 +178,6 @@ func (c *Client) Runners(ctx context.Context, repo string) ([]Runner, error) {
 		}
 		opts.Page = resp.NextPage
 	}
-}
-
-// IsPrivate reports whether the repo is private. A public repo's fork pull
-// requests would run their code on the boxes, so those never get a runner.
-func (c *Client) IsPrivate(ctx context.Context, repo string) (bool, error) {
-	owner, name := split(repo)
-	cl, err := c.client(ctx, owner)
-	if err != nil {
-		return false, err
-	}
-	r, _, err := cl.Repositories.Get(ctx, owner, name)
-	if err != nil {
-		return false, fmt.Errorf("get %s: %w", repo, err)
-	}
-	return r.GetPrivate(), nil
 }
 
 // MintJIT registers a single-use runner and returns its encoded JIT config,

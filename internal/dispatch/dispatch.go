@@ -31,6 +31,8 @@ type Dispatcher struct {
 	// For logging each change once instead of every poll.
 	downBoxes  map[string]bool
 	unservable map[int64]bool
+	serving    map[string]bool
+	public     map[string]bool
 }
 
 func New(cfg *config.Config, client *gh.Client, log *slog.Logger) *Dispatcher {
@@ -43,6 +45,8 @@ func New(cfg *config.Config, client *gh.Client, log *slog.Logger) *Dispatcher {
 		notBefore:  map[int64]time.Time{},
 		downBoxes:  map[string]bool{},
 		unservable: map[int64]bool{},
+		serving:    map[string]bool{},
+		public:     map[string]bool{},
 	}
 	for _, b := range cfg.Boxes {
 		d.boxes = append(d.boxes, box.New(b, cfg))
@@ -68,12 +72,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 // from memory, so a restart picks up where the last process stopped.
 func (d *Dispatcher) Reconcile(ctx context.Context) {
 	states := d.boxStates(ctx)
+	served := d.servedRepos(ctx)
 
 	repos := map[string]bool{}
-	for _, r := range d.cfg.Repos {
+	for _, r := range served {
 		repos[r] = true
 	}
-	// A repo dropped from the config may still have containers to clean up.
+	// A repo the App left may still have containers to clean up.
 	for _, s := range states {
 		for _, c := range s.Containers {
 			repos[c.Repo] = true
@@ -82,6 +87,14 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 	runners := map[string][]gh.Runner{}
 	for r := range repos {
 		rs, err := d.gh.Runners(ctx, r)
+		if err != nil && !d.serving[r] {
+			// The App can't see this repo's runners any more, and won't
+			// again. Treating the list as empty lets its containers be
+			// reaped once idle_timeout passes, busy or not.
+			d.log.Debug("list runners of a repo no longer served", "repo", r, "err", err)
+			runners[r] = nil
+			continue
+		}
 		if err != nil {
 			d.log.Error("list runners", "repo", r, "err", err)
 			continue
@@ -90,7 +103,7 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 	}
 
 	var jobs []gh.Job
-	for _, r := range d.cfg.Repos {
+	for _, r := range served {
 		js, err := d.gh.QueuedJobs(ctx, r)
 		if err != nil {
 			d.log.Error("list queued jobs", "repo", r, "err", err)
@@ -127,6 +140,42 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 		d.log.Info("deregistered orphan runner", "repo", r.Repo, "runner", r.Name)
 	}
 	d.launchAll(ctx, plan.Launches, now)
+}
+
+// servedRepos returns the private repos the App is installed on, logging
+// each one as it starts or stops being served. On an API error it serves
+// nothing this round: launches wait, cleanup still runs.
+func (d *Dispatcher) servedRepos(ctx context.Context) []string {
+	installed, err := d.gh.Repos(ctx)
+	if err != nil {
+		d.log.Error("list the app's repos", "err", err)
+		return nil
+	}
+	now := map[string]bool{}
+	var served []string
+	for _, r := range installed {
+		if !r.Private {
+			// A public repo's fork PRs would run their code on the boxes.
+			if !d.public[r.FullName] {
+				d.public[r.FullName] = true
+				d.log.Error("app is installed on a public repo, not serving it", "repo", r.FullName)
+			}
+			continue
+		}
+		delete(d.public, r.FullName)
+		now[r.FullName] = true
+		served = append(served, r.FullName)
+		if !d.serving[r.FullName] {
+			d.log.Info("serving repo", "repo", r.FullName)
+		}
+	}
+	for r := range d.serving {
+		if !now[r] {
+			d.log.Info("stopped serving repo", "repo", r)
+		}
+	}
+	d.serving = now
+	return served
 }
 
 func (d *Dispatcher) boxStates(ctx context.Context) []BoxState {
@@ -182,28 +231,9 @@ func (d *Dispatcher) reap(ctx context.Context, r Reap) {
 }
 
 func (d *Dispatcher) launchAll(ctx context.Context, launches []Launch, now time.Time) {
-	private := map[string]bool{}
-	for _, l := range launches {
-		if _, ok := private[l.Job.Repo]; ok {
-			continue
-		}
-		p, err := d.gh.IsPrivate(ctx, l.Job.Repo)
-		if err != nil {
-			d.log.Error("check repo visibility", "repo", l.Job.Repo, "err", err)
-		}
-		// Fails closed: an error leaves private false.
-		private[l.Job.Repo] = p && err == nil
-		if err == nil && !p {
-			d.log.Error("repo is public, refusing to run its jobs on the boxes", "repo", l.Job.Repo)
-		}
-	}
-
 	errs := make([]error, len(launches))
 	var wg sync.WaitGroup
 	for i, l := range launches {
-		if !private[l.Job.Repo] {
-			continue
-		}
 		d.lastLaunch[l.Box] = now
 		wg.Add(1)
 		go func() {
@@ -214,9 +244,6 @@ func (d *Dispatcher) launchAll(ctx context.Context, launches []Launch, now time.
 	wg.Wait()
 
 	for i, l := range launches {
-		if !private[l.Job.Repo] {
-			continue
-		}
 		if err := errs[i]; err != nil {
 			d.failures[l.Job.ID]++
 			wait := backoff(d.failures[l.Job.ID])

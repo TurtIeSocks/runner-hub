@@ -24,7 +24,7 @@ const usage = `usage: runner-hub [-config path] [-debug] <command> [args]
 commands:
   run              poll and dispatch until stopped (the service)
   once             one reconcile, then exit
-  status           print each box's state and each repo's hub runners
+  status           print each box's state, and each repo the App is installed on with its runners
   prepare [box..]  ready boxes (dirs, runner image); all boxes if none named
 `
 
@@ -63,7 +63,7 @@ func main() {
 			d.Reconcile(ctx)
 			return
 		}
-		log.Info("runner-hub started", "repos", cfg.Repos, "boxes", len(cfg.Boxes), "poll", cfg.PollInterval, "idle_timeout", cfg.IdleTimeout)
+		log.Info("runner-hub started", "boxes", len(cfg.Boxes), "poll", cfg.PollInterval, "idle_timeout", cfg.IdleTimeout)
 		d.Run(ctx)
 		log.Info("runner-hub stopped")
 	case "status":
@@ -95,22 +95,26 @@ func status(ctx context.Context, cfg *config.Config, client *gh.Client) {
 		}
 		fmt.Printf("%-10s %-6s claimed=%-5v %d/%d %s\n", bc.Name, bc.Arch, st.Claimed, len(st.Containers), bc.Slots, strings.Join(cs, " "))
 	}
-	for _, r := range cfg.Repos {
-		private, err := client.IsPrivate(ctx, r)
-		if err != nil {
-			fmt.Printf("%s: %v\n", r, err)
+	repos, err := client.Repos(ctx)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, r := range repos {
+		if !r.Private {
+			fmt.Printf("%s PUBLIC, not served\n", r.FullName)
 			continue
 		}
-		rs, err := client.Runners(ctx, r)
+		rs, err := client.Runners(ctx, r.FullName)
 		if err != nil {
-			fmt.Printf("%s: %v\n", r, err)
+			fmt.Printf("%s: %v\n", r.FullName, err)
 			continue
 		}
 		var names []string
 		for _, x := range rs {
 			names = append(names, fmt.Sprintf("%s(%s busy=%v)", x.Name, x.Status, x.Busy))
 		}
-		fmt.Printf("%s private=%v runners: %s\n", r, private, strings.Join(names, " "))
+		fmt.Printf("%s runners: %s\n", r.FullName, strings.Join(names, " "))
 	}
 }
 

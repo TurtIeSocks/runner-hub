@@ -18,7 +18,6 @@ type Config struct {
 	RunnerGroupID  int64         `toml:"runner_group_id"`
 	PollInterval   time.Duration `toml:"poll_interval"`
 	IdleTimeout    time.Duration `toml:"idle_timeout"`
-	Repos          []string      `toml:"repos"`
 	// Units that, while active on a box, mean something else has taken it.
 	ClaimUnits     []string `toml:"claim_units"`
 	ClaimUserUnits []string `toml:"claim_user_units"`
@@ -43,7 +42,6 @@ type Box struct {
 }
 
 var (
-	repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	// Box names go into runner and container names, so keep them to what
 	// both accept and what the name parser can split on.
 	boxNameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -117,16 +115,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("poll_interval %s is under 5s", c.PollInterval)
 	case c.IdleTimeout < 2*time.Minute:
 		return fmt.Errorf("idle_timeout %s is under 2m, too short for a runner to start", c.IdleTimeout)
-	}
-	seen := map[string]bool{}
-	for _, r := range c.Repos {
-		if !repoRe.MatchString(r) {
-			return fmt.Errorf("repo %q is not owner/name", r)
-		}
-		if seen[strings.ToLower(r)] {
-			return fmt.Errorf("repo %q is listed twice", r)
-		}
-		seen[strings.ToLower(r)] = true
 	}
 	for _, u := range append(append([]string{}, c.ClaimUnits...), c.ClaimUserUnits...) {
 		if !unitRe.MatchString(u) {

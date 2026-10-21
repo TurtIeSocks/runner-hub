@@ -12,7 +12,6 @@ const base = `
 app_id = 1
 private_key_path = "/k.pem"
 runner_image = "ghcr.io/actions/actions-runner@sha256:abc"
-repos = ["owner/repo-a"]
 
 [ssh]
 key_path = "/id"
@@ -55,8 +54,7 @@ func TestLoadDurations(t *testing.T) {
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]string{
 		"unknown keys":     base + "\nbogus = 1\n",
-		"not owner/name":   strings.Replace(base, `"owner/repo-a"`, `"repo-a"`, 1),
-		"listed twice":     strings.Replace(base, `"owner/repo-a"`, `"owner/repo-a", "Owner/Repo-A"`, 1),
+		"repos":            "repos = [\"owner/repo\"]\n" + base,
 		"lower-case":       base + "\n[[box]]\nname = \"Alex\"\nhost = \"h\"\n",
 		"not one of":       base + "\n[[box]]\nname = \"alex\"\nhost = \"h\"\narch = \"riscv\"\n",
 		"box \"alex\" is":  base + "\n[[box]]\nname = \"alex\"\nhost = \"h\"\n[[box]]\nname = \"alex\"\nhost = \"g\"\n",
