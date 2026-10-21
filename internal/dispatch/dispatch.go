@@ -193,7 +193,7 @@ func (d *Dispatcher) boxStates(ctx context.Context) []BoxState {
 	errs := make([]error, len(d.boxes))
 	var wg sync.WaitGroup
 	for i, b := range d.boxes {
-		states[i] = BoxState{Name: b.Name, Arch: b.Arch, Slots: b.Slots, LastLaunch: d.lastLaunch[b.Name]}
+		states[i] = BoxState{Name: b.Name, Arch: b.Arch, Slots: b.Slots, Priority: b.Priority, LastLaunch: d.lastLaunch[b.Name]}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

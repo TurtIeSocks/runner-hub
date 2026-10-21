@@ -10,7 +10,7 @@ Every `poll_interval` (20s by default) it:
 
 - reads each box over ssh: its runner containers, and whether something else has claimed it
 - lists the repos the App is installed on, then reads each one's queued jobs and runner list
-- launches a runner for each queued job that has none, on the free box of the right arch that launched least recently
+- launches a runner for each queued job that has none, on the free box of the right arch with the highest `priority`, and among those the one that launched least recently. A job whose labels name no arch can go to any box
 - removes runners idle past `idle_timeout` (10m by default): a cancelled job, or one a static runner took first, leaves one behind
 - deregisters runners whose container is gone
 

@@ -186,6 +186,36 @@ func TestBackoff(t *testing.T) {
 	}
 }
 
+func TestHigherPriorityBoxWinsWhileItHasASlot(t *testing.T) {
+	cion := up("cion")
+	cion.Arch, cion.Slots, cion.Priority = "X64", 2, 1
+	cion.LastLaunch = now
+	alex := up("alex")
+	alex.LastLaunch = now.Add(-time.Hour)
+	p := Build(input(
+		[]BoxState{alex, cion},
+		[]gh.Job{job(1, "self-hosted"), job(2, "self-hosted"), job(3, "self-hosted")},
+	))
+	if got, want := launched(p), map[int64]string{1: "cion", 2: "cion", 3: "alex"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("launches %v, want %v", got, want)
+	}
+}
+
+func TestPriorityDoesNotOverrideArch(t *testing.T) {
+	cion := up("cion")
+	cion.Arch, cion.Priority = "X64", 1
+	p := Build(input(
+		[]BoxState{up("alex"), cion},
+		[]gh.Job{job(1, "self-hosted", "ARM64"), job(2, "self-hosted", "X64"), job(3, "self-hosted", "X64")},
+	))
+	if got, want := launched(p), map[int64]string{1: "alex", 2: "cion"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("launches %v, want %v", got, want)
+	}
+	if len(p.Unservable) != 0 {
+		t.Errorf("an X64 job waiting for the X64 box is not unservable")
+	}
+}
+
 func TestSlots(t *testing.T) {
 	b := up("alex", running("hub-alex-1", time.Minute))
 	b.Slots = 2
