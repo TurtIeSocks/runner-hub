@@ -38,7 +38,9 @@ Create it at https://github.com/settings/apps/new:
 - Repository permissions: Actions read-only, Administration read and write (runner registration lives under Administration)
 - Where can this app be installed: only on this account
 
-Then generate a private key, note the App ID, and install the App with "Only select repositories". Avoid "All repositories": every private repo with self-hosted jobs would be served, including ones whose jobs can't run on the pool's arch.
+Then generate a private key, note the App ID, and install the App with "Only select repositories".
+
+runner-hub serves only installations on the accounts in `owners`, so a changed install setting can't hand your boxes to someone else's repos. It also refuses an installation on "All repositories", which would serve every private repo with self-hosted jobs, including ones whose jobs can't run on the pool's arch.
 
 ### The service
 

@@ -21,8 +21,11 @@ type Config struct {
 	// Units that, while active on a box, mean something else has taken it.
 	ClaimUnits     []string `toml:"claim_units"`
 	ClaimUserUnits []string `toml:"claim_user_units"`
-	SSH            SSH      `toml:"ssh"`
-	Boxes          []Box    `toml:"box"`
+	// Accounts whose App installations are served. Anyone else's
+	// installation is ignored.
+	Owners []string `toml:"owners"`
+	SSH    SSH      `toml:"ssh"`
+	Boxes  []Box    `toml:"box"`
 }
 
 type SSH struct {
@@ -45,6 +48,7 @@ var (
 	// Box names go into runner and container names, so keep them to what
 	// both accept and what the name parser can split on.
 	boxNameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	ownerRe   = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 	unitRe    = regexp.MustCompile(`^[A-Za-z0-9@._*:-]+$`)
 	hostRe    = regexp.MustCompile(`^[A-Za-z0-9.:-]+$`)
 	userRe    = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
@@ -103,6 +107,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("app_id is required")
 	case c.PrivateKeyPath == "":
 		return fmt.Errorf("private_key_path is required")
+	case len(c.Owners) == 0:
+		return fmt.Errorf("owners is required: the accounts whose App installations are served")
 	case c.RunnerImage == "":
 		return fmt.Errorf("runner_image is required")
 	case c.SSH.KeyPath == "" || c.SSH.KnownHostsPath == "":
@@ -115,6 +121,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("poll_interval %s is under 5s", c.PollInterval)
 	case c.IdleTimeout < 2*time.Minute:
 		return fmt.Errorf("idle_timeout %s is under 2m, too short for a runner to start", c.IdleTimeout)
+	}
+	for _, o := range c.Owners {
+		if !ownerRe.MatchString(o) {
+			return fmt.Errorf("owner %q is not a GitHub account name", o)
+		}
 	}
 	for _, u := range append(append([]string{}, c.ClaimUnits...), c.ClaimUserUnits...) {
 		if !unitRe.MatchString(u) {

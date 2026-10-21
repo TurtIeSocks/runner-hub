@@ -54,7 +54,7 @@ func main() {
 	}
 	switch args[0] {
 	case "run", "once":
-		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath)
+		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath, cfg.Owners)
 		if err != nil {
 			fail(err)
 		}
@@ -67,7 +67,7 @@ func main() {
 		d.Run(ctx)
 		log.Info("runner-hub stopped")
 	case "status":
-		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath)
+		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath, cfg.Owners)
 		if err != nil {
 			fail(err)
 		}
@@ -95,10 +95,13 @@ func status(ctx context.Context, cfg *config.Config, client *gh.Client) {
 		}
 		fmt.Printf("%-10s %-6s claimed=%-5v %d/%d %s\n", bc.Name, bc.Arch, st.Claimed, len(st.Containers), bc.Slots, strings.Join(cs, " "))
 	}
-	repos, err := client.Repos(ctx)
+	repos, skipped, err := client.Repos(ctx)
 	if err != nil {
 		fmt.Println(err)
 		return
+	}
+	for _, s := range skipped {
+		fmt.Printf("installation on %s NOT SERVED: %s\n", s.Account, s.Reason)
 	}
 	for _, r := range repos {
 		if !r.Private {

@@ -33,6 +33,7 @@ type Dispatcher struct {
 	unservable map[int64]bool
 	serving    map[string]bool
 	public     map[string]bool
+	skipped    map[gh.Skipped]bool
 }
 
 func New(cfg *config.Config, client *gh.Client, log *slog.Logger) *Dispatcher {
@@ -47,6 +48,7 @@ func New(cfg *config.Config, client *gh.Client, log *slog.Logger) *Dispatcher {
 		unservable: map[int64]bool{},
 		serving:    map[string]bool{},
 		public:     map[string]bool{},
+		skipped:    map[gh.Skipped]bool{},
 	}
 	for _, b := range cfg.Boxes {
 		d.boxes = append(d.boxes, box.New(b, cfg))
@@ -146,11 +148,19 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 // each one as it starts or stops being served. On an API error it serves
 // nothing this round: launches wait, cleanup still runs.
 func (d *Dispatcher) servedRepos(ctx context.Context) []string {
-	installed, err := d.gh.Repos(ctx)
+	installed, skipped, err := d.gh.Repos(ctx)
 	if err != nil {
 		d.log.Error("list the app's repos", "err", err)
 		return nil
 	}
+	seen := map[gh.Skipped]bool{}
+	for _, s := range skipped {
+		seen[s] = true
+		if !d.skipped[s] {
+			d.log.Error("not serving an app installation", "account", s.Account, "reason", s.Reason)
+		}
+	}
+	d.skipped = seen
 	now := map[string]bool{}
 	var served []string
 	for _, r := range installed {

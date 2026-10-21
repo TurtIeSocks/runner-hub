@@ -1,6 +1,9 @@
 app_id = 123456
 private_key_path = "/etc/runner-hub/app.pem"
 runner_image = "ghcr.io/actions/actions-runner:2.338.0@sha256:4ffadc0002b2581327e06101fc8c06cd189232baf79fe561fac9caeb76f5e807"
+# Accounts whose App installations are served. The App should also be set
+# to install only on your account; this is checked as well.
+owners = ["your-user"]
 # runner_group_id = 1      # "Default"
 # poll_interval = "20s"
 # idle_timeout = "10m"

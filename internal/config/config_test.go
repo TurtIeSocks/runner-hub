@@ -11,6 +11,7 @@ import (
 const base = `
 app_id = 1
 private_key_path = "/k.pem"
+owners = ["some-user"]
 runner_image = "ghcr.io/actions/actions-runner@sha256:abc"
 
 [ssh]
@@ -61,6 +62,8 @@ func TestLoadRejects(t *testing.T) {
 		"not a hostname":   base + "\n[[box]]\nname = \"alex\"\nhost = \"h;rm\"\n",
 		"under 2m":         "idle_timeout = \"30s\"\n" + base,
 		"app_id":           strings.Replace(base, "app_id = 1", "", 1),
+		"owners is":        strings.Replace(base, `owners = ["some-user"]`, "", 1),
+		"not a GitHub":     strings.Replace(base, `"some-user"`, `"some/user"`, 1),
 		"ssh.key_path and": strings.Replace(base, `key_path = "/id"`, "", 1),
 	}
 	for want, body := range cases {

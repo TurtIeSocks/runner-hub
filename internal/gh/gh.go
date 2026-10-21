@@ -20,6 +20,12 @@ type Repo struct {
 	Private  bool
 }
 
+// Skipped is an installation the App has that runner-hub won't serve.
+type Skipped struct {
+	Account string
+	Reason  string
+}
+
 type Job struct {
 	Repo   string
 	ID     int64
@@ -45,12 +51,16 @@ type Client struct {
 	apps *github.Client
 	atr  *ghinstallation.AppsTransport
 
+	// Lower-cased accounts whose installations are served. The App's own
+	// "only on this account" setting can be changed, so this is checked too.
+	owners map[string]bool
+
 	mu sync.Mutex
 	// One client per account the App is installed on.
 	byOwner map[string]*github.Client
 }
 
-func New(appID int64, privateKeyPath string) (*Client, error) {
+func New(appID int64, privateKeyPath string, owners []string) (*Client, error) {
 	atr, err := ghinstallation.NewAppsTransportKeyFromFile(http.DefaultTransport, appID, privateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("github app key: %w", err)
@@ -59,29 +69,53 @@ func New(appID int64, privateKeyPath string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{apps: apps, atr: atr, byOwner: map[string]*github.Client{}}, nil
+	allowed := map[string]bool{}
+	for _, o := range owners {
+		allowed[strings.ToLower(o)] = true
+	}
+	return &Client{apps: apps, atr: atr, owners: allowed, byOwner: map[string]*github.Client{}}, nil
 }
 
-// Repos lists every repo the App is installed on. Installing the App on a
-// repo is what opts it in.
-func (c *Client) Repos(ctx context.Context) ([]Repo, error) {
+// Repos lists the repos the App is installed on, for installations on an
+// allowed account that picked their repos one by one. Installing the App on
+// a repo is what opts it in.
+func (c *Client) Repos(ctx context.Context) ([]Repo, []Skipped, error) {
 	var out []Repo
+	var skipped []Skipped
 	for inst, err := range c.apps.Apps.ListInstallationsIter(ctx, &github.ListOptions{PerPage: 100}) {
 		if err != nil {
-			return nil, fmt.Errorf("list app installations: %w", err)
+			return nil, nil, fmt.Errorf("list app installations: %w", err)
 		}
-		cl, err := c.installationClient(inst.GetAccount().GetLogin(), inst.GetID())
+		account := inst.GetAccount().GetLogin()
+		if reason := c.refuse(account, inst.GetRepositorySelection()); reason != "" {
+			skipped = append(skipped, Skipped{Account: account, Reason: reason})
+			continue
+		}
+		cl, err := c.installationClient(account, inst.GetID())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for r, err := range cl.Apps.ListReposIter(ctx, &github.ListOptions{PerPage: 100}) {
 			if err != nil {
-				return nil, fmt.Errorf("list repos of installation %d: %w", inst.GetID(), err)
+				return nil, nil, fmt.Errorf("list repos of installation %d: %w", inst.GetID(), err)
 			}
 			out = append(out, Repo{FullName: r.GetFullName(), Private: r.GetPrivate()})
 		}
 	}
-	return out, nil
+	return out, skipped, nil
+}
+
+// refuse says why an installation won't be served, or "" if it will.
+func (c *Client) refuse(account, repositorySelection string) string {
+	if !c.owners[strings.ToLower(account)] {
+		return "account is not in owners"
+	}
+	// "All repositories" would serve every private repo, including ones
+	// whose jobs can't run on the pool.
+	if repositorySelection != "selected" {
+		return "installed on all repositories, pick them one by one"
+	}
+	return ""
 }
 
 func (c *Client) installationClient(owner string, id int64) (*github.Client, error) {
@@ -103,6 +137,9 @@ func (c *Client) installationClient(owner string, id int64) (*github.Client, err
 // outlive its repo's installation, so an owner Repos hasn't seen is looked
 // up directly.
 func (c *Client) client(ctx context.Context, owner string) (*github.Client, error) {
+	if !c.owners[strings.ToLower(owner)] {
+		return nil, fmt.Errorf("account %s is not in owners", owner)
+	}
 	c.mu.Lock()
 	cl, ok := c.byOwner[owner]
 	c.mu.Unlock()
