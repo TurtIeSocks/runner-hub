@@ -1,0 +1,3 @@
+# Build outputs shep-deploy must not link in from the operator's checkout:
+# each release builds its own.
+bin
