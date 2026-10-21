@@ -46,21 +46,25 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	args := flag.Args()
 	if len(args) == 0 {
 		flag.Usage()
 		os.Exit(2)
 	}
-	switch args[0] {
-	case "run", "once":
+	if args[0] == "run" || args[0] == "once" {
+		// Before the signal handler, so SIGTERM still kills a process that
+		// is waiting for the lock.
 		unlock, err := lock(cfg.SSH.ControlDir, log)
 		if err != nil {
 			fail(err)
 		}
 		defer unlock()
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	switch args[0] {
+	case "run", "once":
 		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath, cfg.Owners)
 		if err != nil {
 			fail(err)
