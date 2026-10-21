@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/TurtIeSocks/runner-hub/internal/box"
@@ -122,18 +123,32 @@ func status(ctx context.Context, cfg *config.Config, client *gh.Client) {
 }
 
 func prepare(ctx context.Context, cfg *config.Config, only []string) bool {
-	ok := true
+	var boxes []config.Box
 	for _, bc := range cfg.Boxes {
-		if len(only) > 0 && !slices.Contains(only, bc.Name) {
-			continue
+		if len(only) == 0 || slices.Contains(only, bc.Name) {
+			boxes = append(boxes, bc)
 		}
-		report, err := box.New(bc, cfg).Prepare(ctx, cfg.RunnerImage)
-		if err != nil {
-			fmt.Printf("%-10s FAILED %v\n", bc.Name, err)
-			ok = false
-			continue
-		}
-		fmt.Printf("%-10s %s\n", bc.Name, report)
+	}
+	// A first image pull takes a minute or two, so the boxes go in parallel.
+	lines := make([]string, len(boxes))
+	var wg sync.WaitGroup
+	for i, bc := range boxes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			report, err := box.New(bc, cfg).Prepare(ctx, cfg.RunnerImage)
+			if err != nil {
+				lines[i] = fmt.Sprintf("%-10s FAILED %v", bc.Name, err)
+				return
+			}
+			lines[i] = fmt.Sprintf("%-10s %s", bc.Name, report)
+		}()
+	}
+	wg.Wait()
+	ok := true
+	for _, l := range lines {
+		fmt.Println(l)
+		ok = ok && !strings.Contains(l, " FAILED ")
 	}
 	return ok
 }
