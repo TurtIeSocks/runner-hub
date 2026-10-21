@@ -21,8 +21,8 @@ Polling rather than a webhook means no public endpoint. A job waits up to one po
 On the box, each runner is a container of `ghcr.io/actions/actions-runner` plus `build-essential`, `cmake`, `clang` and a few archive tools (`internal/box/runner.Dockerfile`), which static runners would get from their host. Each box builds that image the first time a launch needs it. The container has:
 
 - the host's Docker socket and host networking, so jobs can run `docker` and reach what they start
-- its work dir at the same path inside and out, so a job's own `docker run -v "$PWD:..."` works
-- a shared tool cache at `/srv/runner-hub/toolcache`, so `setup-go` and friends download once per box
+- the runner itself and its work dir at `/srv/runner-hub/work/<name>`, the same path inside and out, hard-linked from a copy of the image's runner install, so a job's own `docker run -v "$PWD:..."` and `container:` jobs find their files on the host
+- a shared tool cache at `/opt/hostedtoolcache`, also the same path inside and out, so `setup-go` and friends download once per box (`setup-python` only works from that path)
 
 The JIT config goes over ssh's stdin and into the container through `docker exec`. It's never on a command line or on the box's disk. The runner reads it from an environment variable and masks it in its logs. It stays in that process's environment, but it's single-use and already spent by then.
 
@@ -76,7 +76,3 @@ Nothing changes on the boxes or in the config. A static runner already serving t
 ## Updating the runner image
 
 GitHub stops sending jobs to runner versions that are too old, and an ephemeral runner can't update itself. Bump `runner_image` to a newer release's tag and digest and restart. Each box rebuilds on its next launch, or ahead of time with `runner-hub prepare`.
-
-## Limits
-
-Jobs with `container:` don't work yet. The runner mounts its own files into the job's container by host path, and those paths only exist inside the runner's container.
