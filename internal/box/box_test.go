@@ -58,9 +58,21 @@ func TestRemoteCommandRejectsUnsafeArgs(t *testing.T) {
 }
 
 func TestScriptsParse(t *testing.T) {
-	for name, s := range map[string]string{"status": statusScript, "launch": launchScript, "remove": removeScript, "prepare": prepareScript} {
+	for name, s := range map[string]string{"status": statusScript, "launch": imageLib + launchScript, "remove": removeScript, "prepare": imageLib + prepareScript} {
 		if out, err := exec.Command("bash", "-n", "-c", s).CombinedOutput(); err != nil {
 			t.Errorf("%s.sh: %v: %s", name, err, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
+func TestImageTag(t *testing.T) {
+	a, b := ImageTag("img@sha256:aa"), ImageTag("img@sha256:bb")
+	if a == b || !strings.HasPrefix(a, "runner-hub/runner:") || a != ImageTag("img@sha256:aa") {
+		t.Errorf("tags %q %q", a, b)
+	}
+	for _, arg := range imageArgs("ghcr.io/actions/actions-runner:2.338.0@sha256:4ffa") {
+		if !safeArg.MatchString(arg) {
+			t.Errorf("image arg %q would be refused", arg)
 		}
 	}
 }

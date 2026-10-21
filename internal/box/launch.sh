@@ -1,8 +1,10 @@
-# Starts one ephemeral runner container. Args: name repo job image.
+# Starts one ephemeral runner container. Args: name repo job base tag dockerfile_b64.
 # The JIT config arrives on stdin and goes straight into the container
 # through docker exec, so it is never on a command line or on the host's disk.
 set -euo pipefail
-name=$1 repo=$2 job=$3 image=$4
+name=$1 repo=$2 job=$3
+ensure_image "$4" "$5" "$6" </dev/null
+image=$5
 base=/srv/runner-hub
 work=$base/work/$name
 
