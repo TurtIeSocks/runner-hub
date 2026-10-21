@@ -4,7 +4,7 @@ ARG BASE
 FROM ${BASE}
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential cmake clang libclang-dev pkg-config zip xz-utils bzip2 wget file rsync \
+ && apt-get install -y --no-install-recommends build-essential cmake clang libclang-dev pkg-config zip xz-utils zstd bzip2 wget file rsync \
  && rm -rf /var/lib/apt/lists/*
 # The base image leaves /home/runner world-writable (777). Native addons that
 # keep a cache under it, like @swc/core's, refuse a cache root whose parent
