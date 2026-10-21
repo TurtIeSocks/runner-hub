@@ -18,7 +18,7 @@ It keeps no state of its own. A runner's name is `hub-<box>-<job id>`, so after 
 
 Polling rather than a webhook means no public endpoint. A job waits up to one poll longer for its runner.
 
-On the box, each runner is a container of `ghcr.io/actions/actions-runner` plus `build-essential` and a few archive tools (`internal/box/runner.Dockerfile`), which static runners would get from their host. Each box builds that image the first time a launch needs it. The container has:
+On the box, each runner is a container of `ghcr.io/actions/actions-runner` plus `build-essential`, `cmake`, `clang` and a few archive tools (`internal/box/runner.Dockerfile`), which static runners would get from their host. Each box builds that image the first time a launch needs it. The container has:
 
 - the host's Docker socket and host networking, so jobs can run `docker` and reach what they start
 - its work dir at the same path inside and out, so a job's own `docker run -v "$PWD:..."` works
