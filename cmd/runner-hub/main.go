@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -55,6 +56,11 @@ func main() {
 	}
 	switch args[0] {
 	case "run", "once":
+		unlock, err := lock(cfg.SSH.ControlDir, log)
+		if err != nil {
+			fail(err)
+		}
+		defer unlock()
 		client, err := gh.New(cfg.AppID, cfg.PrivateKeyPath, cfg.Owners)
 		if err != nil {
 			fail(err)
@@ -151,6 +157,24 @@ func prepare(ctx context.Context, cfg *config.Config, only []string) bool {
 		ok = ok && !strings.Contains(l, " FAILED ")
 	}
 	return ok
+}
+
+// lock holds an exclusive lock for as long as this process dispatches. A
+// deploy starts the new process before the old one has exited, and two
+// dispatchers planning at once would each launch a runner for the same job.
+func lock(dir string, log *slog.Logger) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(dir, "run.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open lock: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		log.Info("waiting for the previous runner-hub to exit")
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("lock: %w", err)
+		}
+	}
+	return func() { f.Close() }, nil
 }
 
 func fail(err error) {
