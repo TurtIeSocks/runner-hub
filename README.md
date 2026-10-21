@@ -18,7 +18,7 @@ It keeps no state of its own. A runner's name is `hub-<box>-<job id>`, so after 
 
 Polling rather than a webhook means no public endpoint. A job waits up to one poll longer for its runner.
 
-On the box, each runner is a container of `ghcr.io/actions/actions-runner` with:
+On the box, each runner is a container of `ghcr.io/actions/actions-runner` plus `build-essential` and a few archive tools (`internal/box/runner.Dockerfile`), which static runners would get from their host. Each box builds that image the first time a launch needs it. The container has:
 
 - the host's Docker socket and host networking, so jobs can run `docker` and reach what they start
 - its work dir at the same path inside and out, so a job's own `docker run -v "$PWD:..."` works
@@ -64,7 +64,7 @@ The box needs Docker, a user in the `docker` group with passwordless sudo, and o
 
 1. Add the service's ssh public key to that user's `authorized_keys`.
 2. Add a `[[box]]` to the config.
-3. Run `runner-hub prepare <box>`. It makes the dirs and pulls the runner image, so the first job doesn't wait on the pull. The host key is pinned on first contact.
+3. Run `runner-hub prepare <box>`. It makes the dirs and builds the runner image, so the first job doesn't wait on it. The host key is pinned on first contact.
 4. Restart the service.
 
 ## Opting a repo in
@@ -75,4 +75,8 @@ Nothing changes on the boxes or in the config. A static runner already serving t
 
 ## Updating the runner image
 
-GitHub stops sending jobs to runner versions that are too old, and an ephemeral runner can't update itself. Bump `runner_image` to a newer release's tag and digest, then run `runner-hub prepare` and restart.
+GitHub stops sending jobs to runner versions that are too old, and an ephemeral runner can't update itself. Bump `runner_image` to a newer release's tag and digest and restart. Each box rebuilds on its next launch, or ahead of time with `runner-hub prepare`.
+
+## Limits
+
+Jobs with `container:` don't work yet. The runner mounts its own files into the job's container by host path, and those paths only exist inside the runner's container.

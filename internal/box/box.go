@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
 	"fmt"
@@ -28,7 +29,22 @@ var (
 	removeScript string
 	//go:embed prepare.sh
 	prepareScript string
+	//go:embed image.sh
+	imageLib string
+	//go:embed runner.Dockerfile
+	dockerfile string
 )
+
+// ImageTag names the image built on a box from base. It changes with the
+// base or the Dockerfile, so a bump in either rebuilds on the next launch.
+func ImageTag(base string) string {
+	sum := sha256.Sum256([]byte(base + "\n" + dockerfile))
+	return fmt.Sprintf("runner-hub/runner:%x", sum[:6])
+}
+
+func imageArgs(base string) []string {
+	return []string{base, ImageTag(base), base64.StdEncoding.EncodeToString([]byte(dockerfile))}
+}
 
 type Box struct {
 	config.Box
@@ -109,13 +125,14 @@ func parseStatus(out []byte) (Status, error) {
 	return st, sc.Err()
 }
 
-// Launch starts a runner container. jit is the encoded JIT config; it goes
-// to the box on ssh's stdin only.
-func (b *Box) Launch(ctx context.Context, name, repo string, jobID int64, image, jit string) error {
-	// The first launch on a box pulls the image.
+// Launch starts a runner container from base. jit is the encoded JIT
+// config; it goes to the box on ssh's stdin only.
+func (b *Box) Launch(ctx context.Context, name, repo string, jobID int64, base, jit string) error {
+	// The first launch on a box pulls and builds the image.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	_, err := b.run(ctx, launchScript, strings.NewReader(jit), name, repo, strconv.FormatInt(jobID, 10), image)
+	args := append([]string{name, repo, strconv.FormatInt(jobID, 10)}, imageArgs(base)...)
+	_, err := b.run(ctx, imageLib+launchScript, strings.NewReader(jit), args...)
 	return err
 }
 
@@ -127,10 +144,10 @@ func (b *Box) Remove(ctx context.Context, name string) error {
 }
 
 // Prepare readies a new box and returns its one-line report.
-func (b *Box) Prepare(ctx context.Context, image string) (string, error) {
+func (b *Box) Prepare(ctx context.Context, base string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	out, err := b.run(ctx, prepareScript, nil, image)
+	out, err := b.run(ctx, imageLib+prepareScript, nil, imageArgs(base)...)
 	return strings.TrimSpace(string(out)), err
 }
 
