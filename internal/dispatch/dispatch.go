@@ -32,6 +32,7 @@ type Dispatcher struct {
 	// For logging each change once instead of every poll.
 	downBoxes  map[string]bool
 	unservable map[int64]bool
+	refused    map[int64]bool
 	serving    map[string]bool
 	public     map[string]bool
 	skipped    map[gh.Skipped]bool
@@ -47,6 +48,7 @@ func New(cfg *config.Config, client *gh.Client, log *slog.Logger) *Dispatcher {
 		notBefore:  map[int64]time.Time{},
 		downBoxes:  map[string]bool{},
 		unservable: map[int64]bool{},
+		refused:    map[int64]bool{},
 		serving:    map[string]bool{},
 		public:     map[string]bool{},
 		skipped:    map[gh.Skipped]bool{},
@@ -124,12 +126,19 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 		Jobs:        jobs,
 		Runners:     runners,
 		NotBefore:   d.notBefore,
+		Public:      d.publicOptIns(served),
 	})
 
 	for _, j := range plan.Unservable {
 		if !d.unservable[j.ID] {
 			d.unservable[j.ID] = true
 			d.log.Warn("no box has the arch this job needs", "repo", j.Repo, "job", j.ID, "name", j.Name, "labels", j.Labels)
+		}
+	}
+	for _, j := range plan.Refused {
+		if !d.refused[j.ID] {
+			d.refused[j.ID] = true
+			d.log.Warn("not running a public repo's job on code it doesn't own", "repo", j.Repo, "job", j.ID, "name", j.Name, "head_repo", j.HeadRepo, "event", j.Event)
 		}
 	}
 	for _, r := range plan.Reaps {
@@ -145,7 +154,24 @@ func (d *Dispatcher) Reconcile(ctx context.Context) {
 	d.launchAll(ctx, plan.Launches, now)
 }
 
-// servedRepos returns the private repos the App is installed on, logging
+// Serves says whether a repo the App is installed on gets runners: a
+// private one always, a public one only with an opt-in in the config.
+func Serves(cfg *config.Config, r gh.Repo) bool {
+	return r.Private || cfg.Public(r.FullName) != nil
+}
+
+// publicOptIns maps each served public repo to its opt-in.
+func (d *Dispatcher) publicOptIns(served []string) map[string]config.PublicRepo {
+	out := map[string]config.PublicRepo{}
+	for _, r := range served {
+		if p := d.cfg.Public(r); p != nil {
+			out[r] = *p
+		}
+	}
+	return out
+}
+
+// servedRepos returns the repos the App is installed on that it serves, logging
 // each one as it starts or stops being served. On an API error it serves
 // nothing this round: launches wait, cleanup still runs.
 func (d *Dispatcher) servedRepos(ctx context.Context) []string {
@@ -165,11 +191,11 @@ func (d *Dispatcher) servedRepos(ctx context.Context) []string {
 	now := map[string]bool{}
 	var served []string
 	for _, r := range installed {
-		if !r.Private {
+		if !Serves(d.cfg, r) {
 			// A public repo's fork PRs would run their code on the boxes.
 			if !d.public[r.FullName] {
 				d.public[r.FullName] = true
-				d.log.Error("app is installed on a public repo, not serving it", "repo", r.FullName)
+				d.log.Error("app is installed on a public repo with no public_repo entry, not serving it", "repo", r.FullName)
 			}
 			continue
 		}
@@ -272,7 +298,7 @@ func (d *Dispatcher) launch(ctx context.Context, l Launch) error {
 	if err != nil {
 		return err
 	}
-	if err := b.Launch(ctx, l.Name, l.Job.Repo, l.Job.ID, d.cfg.RunnerImage, jit); err != nil {
+	if err := b.Launch(ctx, l.Name, l.Job.Repo, l.Job.ID, d.cfg.RunnerImage, jit, l.Container); err != nil {
 		// The registration exists now. Remove the container so the next
 		// poll sees the registration with nothing behind it and
 		// deregisters it.
@@ -305,9 +331,11 @@ func (d *Dispatcher) forgetFinished(queued []gh.Job) {
 			delete(d.failures, id)
 		}
 	}
-	for id := range d.unservable {
-		if !live[id] {
-			delete(d.unservable, id)
+	for _, seen := range []map[int64]bool{d.unservable, d.refused} {
+		for id := range seen {
+			if !live[id] {
+				delete(seen, id)
+			}
 		}
 	}
 }

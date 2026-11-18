@@ -2,9 +2,11 @@ package dispatch
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/TurtIeSocks/runner-hub/internal/box"
+	"github.com/TurtIeSocks/runner-hub/internal/config"
 	"github.com/TurtIeSocks/runner-hub/internal/gh"
 )
 
@@ -31,13 +33,16 @@ type Input struct {
 	Jobs        []gh.Job
 	Runners     map[string][]gh.Runner
 	NotBefore   map[int64]time.Time
+	// Public holds the opt-in of each served public repo, by repo.
+	Public map[string]config.PublicRepo
 }
 
 type Launch struct {
-	Job    gh.Job
-	Box    string
-	Name   string
-	Labels []string
+	Job       gh.Job
+	Box       string
+	Name      string
+	Labels    []string
+	Container box.Options
 }
 
 // Reap removes a container that sat idle past the timeout, along with its
@@ -63,6 +68,19 @@ type Plan struct {
 	// Unservable jobs are self-hosted Linux jobs no configured box's arch
 	// can take.
 	Unservable []gh.Job
+	// Refused jobs are a public repo's that run code it doesn't own.
+	Refused []gh.Job
+}
+
+// The events whose runs check out the repo's own code. pull_request_target
+// is left out: it runs with the base repo's rights and is often made to
+// check out the fork's head.
+var trustedEvents = map[string]bool{"push": true, "pull_request": true, "workflow_dispatch": true}
+
+// trusted says whether a public repo's job runs the repo's own code: a run
+// from one of its branches, never a fork's.
+func trusted(j gh.Job) bool {
+	return strings.EqualFold(j.HeadRepo, j.Repo) && trustedEvents[j.Event]
 }
 
 // A container that isn't running can't be doing a job; this is how long one
@@ -125,6 +143,19 @@ func Build(in Input) Plan {
 		if !ok || covered[j.ID] || in.Now.Before(in.NotBefore[j.ID]) {
 			continue
 		}
+		container := box.Options{Docker: true}
+		if pub, public := in.Public[j.Repo]; public {
+			if !trusted(j) {
+				p.Refused = append(p.Refused, j)
+				continue
+			}
+			if arch != "" && arch != pub.Arch {
+				p.Unservable = append(p.Unservable, j)
+				continue
+			}
+			arch = pub.Arch
+			container = box.Options{Docker: pub.Docker, CPUs: pub.CPUs, Mounts: pub.Mounts, OwnCodeOnly: true}
+		}
 		b := pickBox(in.Boxes, arch, used)
 		if b == nil {
 			if !anyArch(in.Boxes, arch) {
@@ -135,10 +166,11 @@ func Build(in Input) Plan {
 		used[b.Name]++
 		covered[j.ID] = true
 		p.Launches = append(p.Launches, Launch{
-			Job:    j,
-			Box:    b.Name,
-			Name:   RunnerName(b.Name, j.ID),
-			Labels: RunnerLabels(j.Labels, b.Arch),
+			Job:       j,
+			Box:       b.Name,
+			Name:      RunnerName(b.Name, j.ID),
+			Labels:    RunnerLabels(j.Labels, b.Arch),
+			Container: container,
 		})
 	}
 	return p

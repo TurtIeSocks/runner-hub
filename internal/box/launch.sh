@@ -1,4 +1,5 @@
-# Starts one ephemeral runner container. Args: name repo job base tag dockerfile_b64.
+# Starts one ephemeral runner container. Args: name repo job base tag
+# dockerfile_b64 sock|nosock, then any docker run flags the repo adds.
 # The JIT config arrives on stdin and goes straight into the container
 # through docker exec, so it is never on a command line or on the host's disk.
 set -euo pipefail
@@ -6,6 +7,9 @@ name=$1 repo=$2 job=$3
 ensure_dirs </dev/null
 ensure_image "$4" "$5" "$6" </dev/null
 image=$5
+sock=$7
+shift 7
+extra=("$@")
 work=/srv/runner-hub/work/$name
 
 # The runner runs from a hard-linked copy of the template, at the same path
@@ -15,7 +19,10 @@ sudo rm -rf -- "$work" </dev/null
 sudo cp -al "/srv/runner-hub/runner/${image#*:}" "$work" </dev/null
 sudo find "$work" -type d -exec chown 1001:1001 {} + </dev/null
 sudo chmod 700 "$work" </dev/null
-sock_gid=$(stat -c %g /var/run/docker.sock)
+socket=()
+if [ "$sock" = sock ]; then
+  socket=(--group-add "$(stat -c %g /var/run/docker.sock)" -v /var/run/docker.sock:/var/run/docker.sock)
+fi
 
 # Waits for the JIT config, then hands it to the runner through the
 # environment variable the runner reads its --jitconfig from.
@@ -36,8 +43,8 @@ docker run -d --rm --name "$name" \
   --label "runner-hub.job=$job" \
   --label "runner-hub.started=$(date +%s)" \
   --network host \
-  --group-add "$sock_gid" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
+  "${socket[@]}" \
+  "${extra[@]}" \
   -v "$toolcache:$toolcache" \
   -e "RUNNER_TOOL_CACHE=$toolcache" \
   -e "AGENT_TOOLSDIRECTORY=$toolcache" \

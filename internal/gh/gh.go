@@ -32,6 +32,10 @@ type Job struct {
 	RunID  int64
 	Name   string
 	Labels []string
+	// From the job's run: the repo its code comes from (a fork's for a
+	// fork's pull request) and the event that started it.
+	HeadRepo string
+	Event    string
 }
 
 type Runner struct {
@@ -187,7 +191,10 @@ func (c *Client) QueuedJobs(ctx context.Context, repo string) ([]Job, error) {
 				if j.GetStatus() != "queued" {
 					continue
 				}
-				jobs = append(jobs, Job{Repo: repo, ID: j.GetID(), RunID: run.GetID(), Name: j.GetName(), Labels: j.Labels})
+				jobs = append(jobs, Job{
+					Repo: repo, ID: j.GetID(), RunID: run.GetID(), Name: j.GetName(), Labels: j.Labels,
+					HeadRepo: run.GetHeadRepository().GetFullName(), Event: run.GetEvent(),
+				})
 			}
 		}
 	}

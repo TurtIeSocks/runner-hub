@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,8 +25,36 @@ type Config struct {
 	// Accounts whose App installations are served. Anyone else's
 	// installation is ignored.
 	Owners []string `toml:"owners"`
-	SSH    SSH      `toml:"ssh"`
-	Boxes  []Box    `toml:"box"`
+	// Public repos served despite being public, each with its own guard
+	// rails. Any other public repo is never served.
+	PublicRepos []PublicRepo `toml:"public_repo"`
+	SSH         SSH          `toml:"ssh"`
+	Boxes       []Box        `toml:"box"`
+}
+
+// PublicRepo opts one public repo in. Its jobs run only from its own
+// branches (never a fork's), only on boxes of Arch, and in a container
+// shaped by the rest.
+type PublicRepo struct {
+	Name string `toml:"name"`
+	Arch string `toml:"arch"`
+	// Docker mounts the host's Docker socket, which is root on the box.
+	Docker bool `toml:"docker"`
+	// CPUs caps the container (docker run --cpus); 0 leaves it uncapped.
+	CPUs float64 `toml:"cpus"`
+	// Mounts are "host:container" or "host:container:ro", both absolute.
+	// The host path must exist on the box.
+	Mounts []string `toml:"mounts"`
+}
+
+// Public returns the opt-in for a public repo, or nil when it has none.
+func (c *Config) Public(repo string) *PublicRepo {
+	for i := range c.PublicRepos {
+		if strings.EqualFold(c.PublicRepos[i].Name, repo) {
+			return &c.PublicRepos[i]
+		}
+	}
+	return nil
 }
 
 type SSH struct {
@@ -55,6 +84,8 @@ var (
 	unitRe    = regexp.MustCompile(`^[A-Za-z0-9@._*:-]+$`)
 	hostRe    = regexp.MustCompile(`^[A-Za-z0-9.:-]+$`)
 	userRe    = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+	repoRe    = regexp.MustCompile(`^([A-Za-z0-9-]+)/[A-Za-z0-9._-]+$`)
+	mountRe   = regexp.MustCompile(`^/[A-Za-z0-9._/-]*:/[A-Za-z0-9._/-]*(:ro)?$`)
 )
 
 // Archs maps the arch labels GitHub uses to whether a box can carry them.
@@ -101,6 +132,9 @@ func (c *Config) applyDefaults() {
 		if b.Slots == 0 {
 			b.Slots = 1
 		}
+	}
+	for i := range c.PublicRepos {
+		c.PublicRepos[i].Arch = strings.ToUpper(c.PublicRepos[i].Arch)
 	}
 }
 
@@ -152,6 +186,32 @@ func (c *Config) validate() error {
 			return fmt.Errorf("box %s: slots must be at least 1", b.Name)
 		}
 		names[b.Name] = true
+	}
+	return c.validatePublic()
+}
+
+func (c *Config) validatePublic() error {
+	seen := map[string]bool{}
+	for _, p := range c.PublicRepos {
+		m := repoRe.FindStringSubmatch(p.Name)
+		switch {
+		case m == nil:
+			return fmt.Errorf("public_repo %q is not owner/repo", p.Name)
+		case !slices.ContainsFunc(c.Owners, func(o string) bool { return strings.EqualFold(o, m[1]) }):
+			return fmt.Errorf("public_repo %s: %s is not in owners", p.Name, m[1])
+		case seen[strings.ToLower(p.Name)]:
+			return fmt.Errorf("public_repo %s is listed twice", p.Name)
+		case !slices.ContainsFunc(c.Boxes, func(b Box) bool { return b.Arch == p.Arch }):
+			return fmt.Errorf("public_repo %s: no box has arch %q", p.Name, p.Arch)
+		case p.CPUs < 0:
+			return fmt.Errorf("public_repo %s: cpus is negative", p.Name)
+		}
+		for _, mount := range p.Mounts {
+			if !mountRe.MatchString(mount) {
+				return fmt.Errorf("public_repo %s: mount %q is not /host:/container or /host:/container:ro", p.Name, mount)
+			}
+		}
+		seen[strings.ToLower(p.Name)] = true
 	}
 	return nil
 }
