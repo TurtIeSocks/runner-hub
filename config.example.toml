@@ -13,6 +13,14 @@ owners = ["your-user"]
 # claim_units = ["heavy-job-*"]           # system units
 # claim_user_units = ["keep-away.timer"]  # the ssh user's own units
 
+# A public repo served anyway, with guard rails. See the README.
+# [[public_repo]]
+# name   = "your-user/your-repo"
+# arch   = "X64"
+# docker = false
+# cpus   = 4.0
+# mounts = ["/srv/data:/data:ro"]
+
 [ssh]
 key_path = "/etc/runner-hub/id_ed25519"
 known_hosts_path = "/var/lib/runner-hub/known_hosts"

@@ -26,7 +26,7 @@ On the box, each runner is a container of `ghcr.io/actions/actions-runner` plus 
 
 The JIT config goes over ssh's stdin and into the container through `docker exec`. It's never on a command line or on the box's disk. The runner reads it from an environment variable and masks it in its logs. It stays in that process's environment, but it's single-use and already spent by then.
 
-Only private repos get runners. A public repo's fork PRs would run their code on the boxes, so runner-hub skips them even with the App installed.
+Only private repos get runners by default. A public repo's fork PRs would run their code on the boxes, so runner-hub skips a public repo even with the App installed, unless the config opts it in (see [Opting a public repo in](#opting-a-public-repo-in)).
 
 ## Setup
 
@@ -72,6 +72,26 @@ The box needs Docker, a user in the `docker` group with passwordless sudo, and o
 Add the repo to the App's installation (App settings, Install App, configure). The next poll picks it up and logs `serving repo`. Removing it stops new runners, and its leftover ones are reaped once idle.
 
 Nothing changes on the boxes or in the config. A static runner already serving the repo will race runner-hub for its jobs. Whichever runner loses sits idle until the reaper removes it.
+
+## Opting a public repo in
+
+A `[[public_repo]]` entry lets one public repo through, with guard rails:
+
+```toml
+[[public_repo]]
+name   = "your-user/your-repo"
+arch   = "X64"          # its jobs go only to boxes of this arch
+docker = false          # leave out the host's Docker socket (the default)
+cpus   = 4.0            # docker run --cpus, 0 for no cap
+mounts = ["/srv/data:/data:ro", "/srv/cache/your-repo:/cache"]
+```
+
+- **Its own code only.** A job runs only when its run's head repo is the repo itself and the event is `push`, `pull_request` or `workflow_dispatch`. A fork's pull request, or any `pull_request_target` run, gets no runner and is logged once. This holds whatever the workflow says.
+- **No Docker socket** unless `docker = true`. The socket is root on the box.
+- **Mounts** are bind mounts, `host:container` with `:ro` for read-only. The host path must exist, or the launch fails.
+- The owner must be in `owners`, and some box must have the arch.
+
+Still turn on the repo's "Require approval for all outside collaborators" for fork pull request workflows, and keep the workflow's own fork check (`github.event.pull_request.head.repo.full_name == github.repository`). A fork's pull request then shows the self-hosted job as skipped.
 
 ## Updating the runner image
 

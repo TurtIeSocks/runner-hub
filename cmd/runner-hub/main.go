@@ -115,7 +115,7 @@ func status(ctx context.Context, cfg *config.Config, client *gh.Client) {
 		fmt.Printf("installation on %s NOT SERVED: %s\n", s.Account, s.Reason)
 	}
 	for _, r := range repos {
-		if !r.Private {
+		if !dispatch.Serves(cfg, r) {
 			fmt.Printf("%s PUBLIC, not served\n", r.FullName)
 			continue
 		}

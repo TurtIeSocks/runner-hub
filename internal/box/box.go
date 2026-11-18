@@ -125,13 +125,47 @@ func parseStatus(out []byte) (Status, error) {
 	return st, sc.Err()
 }
 
+// Options shape a runner's container beyond what every runner gets.
+type Options struct {
+	// Docker mounts the host's Docker socket, which is root on the box.
+	Docker bool
+	// CPUs caps the container; 0 leaves it uncapped.
+	CPUs float64
+	// Mounts are "host:container" or "host:container:ro".
+	Mounts []string
+}
+
+// launchArgs is "sock" or "nosock", then the docker run flags the options
+// add. Each mount is a bind --mount, which fails on a missing host path
+// where -v would make an empty directory there.
+func (o Options) launchArgs() []string {
+	out := []string{"nosock"}
+	if o.Docker {
+		out[0] = "sock"
+	}
+	if o.CPUs > 0 {
+		out = append(out, "--cpus="+strconv.FormatFloat(o.CPUs, 'f', -1, 64))
+	}
+	for _, m := range o.Mounts {
+		host, rest, _ := strings.Cut(m, ":")
+		dst, ro := strings.CutSuffix(rest, ":ro")
+		arg := "--mount=type=bind,src=" + host + ",dst=" + dst
+		if ro {
+			arg += ",readonly"
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
 // Launch starts a runner container from base. jit is the encoded JIT
 // config; it goes to the box on ssh's stdin only.
-func (b *Box) Launch(ctx context.Context, name, repo string, jobID int64, base, jit string) error {
+func (b *Box) Launch(ctx context.Context, name, repo string, jobID int64, base, jit string, opts Options) error {
 	// The first launch on a box pulls and builds the image.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	args := append([]string{name, repo, strconv.FormatInt(jobID, 10)}, imageArgs(base)...)
+	args = append(args, opts.launchArgs()...)
 	_, err := b.run(ctx, imageLib+launchScript, strings.NewReader(jit), args...)
 	return err
 }

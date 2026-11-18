@@ -76,3 +76,33 @@ func TestImageTag(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchArgs(t *testing.T) {
+	cases := []struct {
+		opts Options
+		want []string
+	}{
+		{Options{Docker: true}, []string{"sock"}},
+		{Options{}, []string{"nosock"}},
+		{
+			Options{CPUs: 6, Mounts: []string{"/srv/data/blob:/data/blob:ro", "/srv/cache:/cache"}},
+			[]string{
+				"nosock", "--cpus=6",
+				"--mount=type=bind,src=/srv/data/blob,dst=/data/blob,readonly",
+				"--mount=type=bind,src=/srv/cache,dst=/cache",
+			},
+		},
+		{Options{Docker: true, CPUs: 1.5}, []string{"sock", "--cpus=1.5"}},
+	}
+	for _, c := range cases {
+		got := c.opts.launchArgs()
+		if strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Errorf("%+v: got %q, want %q", c.opts, got, c.want)
+		}
+		for _, a := range got {
+			if !safeArg.MatchString(a) {
+				t.Errorf("launch arg %q would be refused", a)
+			}
+		}
+	}
+}

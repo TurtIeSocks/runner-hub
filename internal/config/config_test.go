@@ -65,11 +65,41 @@ func TestLoadRejects(t *testing.T) {
 		"owners is":        strings.Replace(base, `owners = ["some-user"]`, "", 1),
 		"not a GitHub":     strings.Replace(base, `"some-user"`, `"some/user"`, 1),
 		"ssh.key_path and": strings.Replace(base, `key_path = "/id"`, "", 1),
+		"not owner/repo":   base + x64Box + "[[public_repo]]\nname = \"repo\"\narch = \"X64\"\n",
+		"is not in owners": base + x64Box + "[[public_repo]]\nname = \"else/repo\"\narch = \"X64\"\n",
+		"no box has arch":  base + x64Box + "[[public_repo]]\nname = \"some-user/repo\"\narch = \"ARM64\"\n",
+		"listed twice":     base + x64Box + "[[public_repo]]\nname = \"some-user/repo\"\narch = \"X64\"\n[[public_repo]]\nname = \"Some-User/Repo\"\narch = \"X64\"\n",
+		"cpus is negative": base + x64Box + "[[public_repo]]\nname = \"some-user/repo\"\narch = \"X64\"\ncpus = -1.0\n",
+		"is not /host":     base + x64Box + "[[public_repo]]\nname = \"some-user/repo\"\narch = \"X64\"\nmounts = [\"relative:/c\"]\n",
+		"is not /host:":    base + x64Box + "[[public_repo]]\nname = \"some-user/repo\"\narch = \"X64\"\nmounts = [\"/h:/c:rw\"]\n",
 	}
 	for want, body := range cases {
 		_, err := Load(write(t, body))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("want error containing %q, got %v", want, err)
 		}
+	}
+}
+
+const x64Box = "\n[[box]]\nname = \"big\"\nhost = \"10.0.0.2\"\narch = \"x64\"\n"
+
+func TestLoadPublicRepo(t *testing.T) {
+	body := base + x64Box + `
+[[public_repo]]
+name = "some-user/repo"
+arch = "x64"
+cpus = 6.0
+mounts = ["/srv/a:/a:ro", "/srv/b:/b"]
+`
+	c, err := Load(write(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Public("Some-User/Repo")
+	if p == nil || p.Arch != "X64" || p.Docker || p.CPUs != 6 || len(p.Mounts) != 2 {
+		t.Fatalf("got %+v", p)
+	}
+	if c.Public("some-user/other") != nil {
+		t.Error("an unlisted repo has an opt-in")
 	}
 }
