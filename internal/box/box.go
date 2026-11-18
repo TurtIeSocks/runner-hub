@@ -32,8 +32,20 @@ var (
 	//go:embed image.sh
 	imageLib string
 	//go:embed runner.Dockerfile
-	dockerfile string
+	baseDockerfile string
+	//go:embed own-code.sh
+	ownCodeScript string
 )
+
+// OwnCodeHook is where the image keeps own-code.sh, root-owned so a job
+// can't change it.
+const OwnCodeHook = "/opt/runner-hub/own-code.sh"
+
+// dockerfile is runner.Dockerfile plus a layer holding the own-code hook,
+// so a change to either rebuilds the image.
+var dockerfile = baseDockerfile + "USER root\nRUN install -d -m 755 /opt/runner-hub && echo " +
+	base64.StdEncoding.EncodeToString([]byte(ownCodeScript)) + " | base64 -d > " + OwnCodeHook +
+	" && chmod 755 " + OwnCodeHook + "\nUSER runner\n"
 
 // ImageTag names the image built on a box from base. It changes with the
 // base or the Dockerfile, so a bump in either rebuilds on the next launch.
@@ -133,6 +145,9 @@ type Options struct {
 	CPUs float64
 	// Mounts are "host:container" or "host:container:ro".
 	Mounts []string
+	// OwnCodeOnly runs the own-code hook before every job, which fails any
+	// job that isn't on the repo's own code.
+	OwnCodeOnly bool
 }
 
 // launchArgs is "sock" or "nosock", then the docker run flags the options
@@ -142,6 +157,9 @@ func (o Options) launchArgs() []string {
 	out := []string{"nosock"}
 	if o.Docker {
 		out[0] = "sock"
+	}
+	if o.OwnCodeOnly {
+		out = append(out, "--env=ACTIONS_RUNNER_HOOK_JOB_STARTED="+OwnCodeHook)
 	}
 	if o.CPUs > 0 {
 		out = append(out, "--cpus="+strconv.FormatFloat(o.CPUs, 'f', -1, 64))

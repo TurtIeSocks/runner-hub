@@ -154,7 +154,7 @@ func Build(in Input) Plan {
 				continue
 			}
 			arch = pub.Arch
-			container = box.Options{Docker: pub.Docker, CPUs: pub.CPUs, Mounts: pub.Mounts}
+			container = box.Options{Docker: pub.Docker, CPUs: pub.CPUs, Mounts: pub.Mounts, OwnCodeOnly: true}
 		}
 		b := pickBox(in.Boxes, arch, used)
 		if b == nil {

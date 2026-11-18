@@ -1,7 +1,10 @@
 package box
 
 import (
+	"encoding/base64"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +61,7 @@ func TestRemoteCommandRejectsUnsafeArgs(t *testing.T) {
 }
 
 func TestScriptsParse(t *testing.T) {
-	for name, s := range map[string]string{"status": statusScript, "launch": imageLib + launchScript, "remove": removeScript, "prepare": imageLib + prepareScript} {
+	for name, s := range map[string]string{"own-code": ownCodeScript, "status": statusScript, "launch": imageLib + launchScript, "remove": removeScript, "prepare": imageLib + prepareScript} {
 		if out, err := exec.Command("bash", "-n", "-c", s).CombinedOutput(); err != nil {
 			t.Errorf("%s.sh: %v: %s", name, err, strings.TrimSpace(string(out)))
 		}
@@ -93,6 +96,7 @@ func TestLaunchArgs(t *testing.T) {
 			},
 		},
 		{Options{Docker: true, CPUs: 1.5}, []string{"sock", "--cpus=1.5"}},
+		{Options{OwnCodeOnly: true}, []string{"nosock", "--env=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hub/own-code.sh"}},
 	}
 	for _, c := range cases {
 		got := c.opts.launchArgs()
@@ -104,5 +108,69 @@ func TestLaunchArgs(t *testing.T) {
 				t.Errorf("launch arg %q would be refused", a)
 			}
 		}
+	}
+}
+
+func TestOwnCodeHook(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("no jq")
+	}
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "own-code.sh")
+	if err := os.WriteFile(hook, []byte(ownCodeScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr := func(head string) string {
+		return `{"pull_request":{"head":{"repo":{"full_name":"` + head + `"}}}}`
+	}
+	cases := []struct {
+		event, repo, payload string
+		ok                   bool
+	}{
+		{"push", "o/r", `{}`, true},
+		{"workflow_dispatch", "o/r", `{}`, true},
+		{"pull_request", "o/r", pr("o/r"), true},
+		{"pull_request", "O/R", pr("o/r"), true},
+		{"pull_request", "o/r", pr("someone/r"), false},
+		{"pull_request", "o/r", `{}`, false},
+		{"pull_request", "o/r", `not json`, false},
+		{"pull_request_target", "o/r", pr("o/r"), false},
+		{"workflow_run", "o/r", `{}`, false},
+		{"", "o/r", `{}`, false},
+		{"push", "", `{}`, false},
+	}
+	for _, c := range cases {
+		payload := filepath.Join(dir, "event.json")
+		if err := os.WriteFile(payload, []byte(c.payload), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", hook)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_EVENT_PATH=" + payload}
+		if c.event != "" {
+			cmd.Env = append(cmd.Env, "GITHUB_EVENT_NAME="+c.event)
+		}
+		if c.repo != "" {
+			cmd.Env = append(cmd.Env, "GITHUB_REPOSITORY="+c.repo)
+		}
+		out, err := cmd.CombinedOutput()
+		if ok := err == nil; ok != c.ok {
+			t.Errorf("%s on %s with %s: ran=%v, want %v (%s)", c.event, c.repo, c.payload, ok, c.ok, out)
+		}
+	}
+	// No payload at all refuses too.
+	cmd := exec.Command("bash", hook)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_EVENT_NAME=pull_request", "GITHUB_REPOSITORY=o/r"}
+	if cmd.Run() == nil {
+		t.Error("a pull_request with no payload ran")
+	}
+}
+
+func TestImageHoldsTheOwnCodeHook(t *testing.T) {
+	enc := base64.StdEncoding.EncodeToString([]byte(ownCodeScript))
+	if !strings.Contains(dockerfile, enc) || !strings.Contains(dockerfile, "> "+OwnCodeHook) {
+		t.Error("the image's Dockerfile doesn't write the hook")
+	}
+	if !strings.HasSuffix(dockerfile, "USER runner\n") {
+		t.Error("the image doesn't end back on the runner user")
 	}
 }

@@ -56,7 +56,7 @@ func TestPublicRepoRunsItsOwnCodeOnItsArchOnly(t *testing.T) {
 		if got := launched(p); !reflect.DeepEqual(got, map[int64]string{1: "big"}) {
 			t.Fatalf("%s: launches %v, want job 1 on big", event, got)
 		}
-		want := box.Options{CPUs: 6, Mounts: []string{"/srv/a:/a:ro"}}
+		want := box.Options{CPUs: 6, Mounts: []string{"/srv/a:/a:ro"}, OwnCodeOnly: true}
 		if got := p.Launches[0].Container; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: container %+v, want %+v", event, got, want)
 		}

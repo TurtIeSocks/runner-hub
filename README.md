@@ -86,7 +86,9 @@ cpus   = 4.0            # docker run --cpus, 0 for no cap
 mounts = ["/srv/data:/data:ro", "/srv/cache/your-repo:/cache"]
 ```
 
-- **Its own code only.** A job runs only when its run's head repo is the repo itself and the event is `push`, `pull_request` or `workflow_dispatch`. A fork's pull request, or any `pull_request_target` run, gets no runner and is logged once. This holds whatever the workflow says.
+- **Its own code only**, checked twice:
+  - Before launching, a job gets a runner only when its run's head repo is the repo itself and the event is `push`, `pull_request` or `workflow_dispatch`. A fork's pull request, or any `pull_request_target` run, gets none and is logged once.
+  - GitHub hands a runner any queued job whose labels match, not just the one it was launched for, and a fork's pull request can edit the workflow. So the runner also runs a job-started hook (`internal/box/own-code.sh`, baked into the image) that reads the job it actually got and fails it before its first step unless it's the repo's own code. Anything unexpected fails.
 - **No Docker socket** unless `docker = true`. The socket is root on the box.
 - **Mounts** are bind mounts, `host:container` with `:ro` for read-only. The host path must exist, or the launch fails.
 - The owner must be in `owners`, and some box must have the arch.
