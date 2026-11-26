@@ -62,6 +62,10 @@ type Client struct {
 	mu sync.Mutex
 	// One client per account the App is installed on.
 	byOwner map[string]*github.Client
+
+	// Each repo's queued jobs by run, as the last fetch of that run saw
+	// them (QueuedJobs). Only QueuedJobs touches it, one call at a time.
+	runs map[string]map[int64]runJobs
 }
 
 func New(appID int64, privateKeyPath string, owners []string) (*Client, error) {
@@ -77,7 +81,7 @@ func New(appID int64, privateKeyPath string, owners []string) (*Client, error) {
 	for _, o := range owners {
 		allowed[strings.ToLower(o)] = true
 	}
-	return &Client{apps: apps, atr: atr, owners: allowed, byOwner: map[string]*github.Client{}}, nil
+	return &Client{apps: apps, atr: atr, owners: allowed, byOwner: map[string]*github.Client{}, runs: map[string]map[int64]runJobs{}}, nil
 }
 
 // Repos lists the repos the App is installed on, for installations on an
@@ -162,14 +166,37 @@ func split(repo string) (string, string) {
 	return owner, name
 }
 
+// runJobs is one run's queued jobs as a fetch saw them.
+type runJobs struct {
+	fetched time.Time
+	jobs    []Job
+}
+
+// jobsMaxAge is how long a run's jobs are reused before they're fetched
+// again. A run's updated_at doesn't move when its jobs do, so age is the
+// only sign. A job that queues behind a `needs:` waits up to this much more.
+const jobsMaxAge = time.Minute
+
+func (r runJobs) stillGood(now time.Time) bool {
+	return now.Sub(r.fetched) < jobsMaxAge
+}
+
 // QueuedJobs lists the repo's jobs waiting for a runner. A run already in
 // progress can still hold queued jobs, so both run states are read.
+//
+// Each run's jobs are a call of their own, so a long queue spent the App's
+// 5000 calls an hour within the hour, every hour, and nothing was launched
+// until it reset (30 runs at a poll every 20 s is about 6300 calls). A
+// run's jobs are fetched once every jobsMaxAge instead of every poll.
 func (c *Client) QueuedJobs(ctx context.Context, repo string) ([]Job, error) {
 	owner, name := split(repo)
 	cl, err := c.client(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
+	cached := c.runs[repo]
+	seen := map[int64]runJobs{}
+	now := time.Now()
 	var jobs []Job
 	for _, status := range []string{"queued", "in_progress"} {
 		runs, _, err := cl.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, &github.ListWorkflowRunsOptions{
@@ -180,24 +207,32 @@ func (c *Client) QueuedJobs(ctx context.Context, repo string) ([]Job, error) {
 			return nil, fmt.Errorf("list %s runs of %s: %w", status, repo, err)
 		}
 		for _, run := range runs.WorkflowRuns {
-			js, _, err := cl.Actions.ListWorkflowJobs(ctx, owner, name, run.GetID(), &github.ListWorkflowJobsOptions{
-				Filter:      "latest",
-				ListOptions: github.ListOptions{PerPage: 100},
-			})
-			if err != nil {
-				return nil, fmt.Errorf("list jobs of %s run %d: %w", repo, run.GetID(), err)
-			}
-			for _, j := range js.Jobs {
-				if j.GetStatus() != "queued" {
-					continue
-				}
-				jobs = append(jobs, Job{
-					Repo: repo, ID: j.GetID(), RunID: run.GetID(), Name: j.GetName(), Labels: j.Labels,
-					HeadRepo: run.GetHeadRepository().GetFullName(), Event: run.GetEvent(),
+			r, ok := cached[run.GetID()]
+			if !ok || !r.stillGood(now) {
+				r = runJobs{fetched: now}
+				js, _, err := cl.Actions.ListWorkflowJobs(ctx, owner, name, run.GetID(), &github.ListWorkflowJobsOptions{
+					Filter:      "latest",
+					ListOptions: github.ListOptions{PerPage: 100},
 				})
+				if err != nil {
+					return nil, fmt.Errorf("list jobs of %s run %d: %w", repo, run.GetID(), err)
+				}
+				for _, j := range js.Jobs {
+					if j.GetStatus() != "queued" {
+						continue
+					}
+					r.jobs = append(r.jobs, Job{
+						Repo: repo, ID: j.GetID(), RunID: run.GetID(), Name: j.GetName(), Labels: j.Labels,
+						HeadRepo: run.GetHeadRepository().GetFullName(), Event: run.GetEvent(),
+					})
+				}
 			}
+			seen[run.GetID()] = r
+			jobs = append(jobs, r.jobs...)
 		}
 	}
+	// Runs no longer queued or in progress drop out.
+	c.runs[repo] = seen
 	return jobs, nil
 }
 
