@@ -175,7 +175,7 @@ type runJobs struct {
 // jobsMaxAge is how long a run's jobs are reused before they're fetched
 // again. A run's updated_at doesn't move when its jobs do, so age is the
 // only sign. A job that queues behind a `needs:` waits up to this much more.
-const jobsMaxAge = time.Minute
+const jobsMaxAge = 2 * time.Minute
 
 func (r runJobs) stillGood(now time.Time) bool {
 	return now.Sub(r.fetched) < jobsMaxAge
